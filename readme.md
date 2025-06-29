@@ -17,7 +17,7 @@ Example: Simulation with ~547 molecules in the dilute phase and ~225 molecules i
                    L     ε      ∆f     ∆µ     Λ     η    N_vap   far-field threshold   start  batch_size       R
 python curved.py  101  -2.95  1.7337  2.00   100   1.0    547             36             0        1         8.462843
 ```
-Example output data for the corresponding case is available in example/curved.
+Example output data for the corresponding case is available in examples/curved.
 
 # First-principles phase diagram prediction
 theory/FLEX_phase_diagram.py => Prediction on nonequilibrium phase coexistence with flat interface as in figure 3 of the main text.
@@ -27,4 +27,4 @@ Example: Predictions at Λ = 10^1, 10^2, 10^3, and µdr = -2.0, 2.0 at specified
                                  ε     rhov
 python FLEX_phase_diagram.py   -2.95   0.05
 ```
-Example output data for the corresponding case is available in example/flat.
+Example output data for the corresponding case is available in examples/flat.
