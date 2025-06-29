@@ -19,7 +19,7 @@ python curved.py  101  -2.95  1.7337  2.00   100   1.0    547       8       0
 ```
 
 # First-principles phase diagram prediction
-FLEX_phase_diagram.py => Prediction on nonequilibrium phase coexistence with flat interface as in figure 3 of the main text.
+theory/FLEX_phase_diagram.py => Prediction on nonequilibrium phase coexistence with flat interface as in figure 3 of the main text.
 ```
 Example: Predictions at Λ = 10^1, 10^2, 10^3, and µdr = -2.0, 2.0 at specified parameters ε = -2.95 and \rhov = 0.05.
 
