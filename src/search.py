@@ -4,13 +4,17 @@ import sys
 import os
 from numba.typed import List
 
+BONDING = 1
+SOLVENT = 0
+INERT = -1
+
 # BFS search of the condensed droplet defined as 
 # the largest B-molecule cluster connected via nearest-neighboring interaction
 @njit
 def condensed_search(lattice,Ly,Lx):
     queue = List()
     max_sz = 30 # Smallest size assumed for efficient search
-    mark = (lattice == 1)
+    mark = (lattice == BONDING)
     cluster = np.full((Ly,Lx),False)
     # Assume CoM doesn't diffuse fast so that at least one of 5x5 lattice site
     # at the center of the system belongs to the condensed phase

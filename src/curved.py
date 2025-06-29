@@ -6,7 +6,15 @@ from multiprocessing import Process
 from numba.typed import List
 from relax import relax
 from search import condensed_search, dilute_search
-from set_rate import set_rate, set_rate_mat, update_mat_rate_rxn, update_mat_rate_displace
+from set_rate import set_rate, set_rate_matrix, update_matrix_rate_rxn, update_matrix_rate_displace
+
+BONDING = 1
+SOLVENT = 0
+INERT = -1
+
+DILUTE = 2
+INTERFACE = 1
+DROPLET = 0
 
 # TODO: Make lattice into a class someday; numba support is experimental at the moment.
 
@@ -16,7 +24,10 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,thr,rng):
     #L = min(Ly,Lx)
 
     kIB, kBI = set_rate(e,df,µdr,eta)
-    mat_nB, mat_nBI, mat_rate = set_rate_mat(kIB,kBI,lattice,Ly,Lx,e,df,µdr,D,eta)
+    # matrix for nearest-neighboring B-molecules (matrix_nB)
+    # matrix for nearest-neighboring B and I-molecules (matrix_nBI)
+    # matrix for kMC rates (matrix_rate)
+    matrix_nB, matrix_nBI, matrix_rate = set_rate_mat(kIB,kBI,lattice,Ly,Lx,e,df,µdr,D,eta)
 
     mask = np.full((Ly,Lx),False) # Mark far-field lattice sites
 
@@ -47,9 +58,9 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,thr,rng):
 
     # NOTE: Realign the droplet every 100 sweeps of kMC events
     for count in range(100*(lattice != 0).sum()):
-        cumul = mat_rate.sum()
+        cumul = matrix_rate.sum()
         rn = rng.random()*cumul
-        v = np.searchsorted(mat_rate.cumsum(),rn,side="right")
+        v = np.searchsorted(matrix_rate.cumsum(),rn,side="right")
         y = v // Lx
         x = v % Lx
 
@@ -66,9 +77,9 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,thr,rng):
         update_rxn = 0
         update_x = 0
         update_y = 0
-        molecule_type = lattice[y,x] # 1 = B; 0 = S; -1 = I
-        nB = mat_nB[y,x]
-        nBI = mat_nBI[y,x]
+        molecule_type = lattice[y,x] # 1 = BONDING; 0 = SOLVENT; -1 = INERT
+        nB = matrix_nB[y,x]
+        nBI = matrix_nBI[y,x]
 
         near_droplet = droplet[y,x]
         near_dilute = dilute[y,x]
@@ -76,37 +87,37 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,thr,rng):
             near_droplet |= droplet[(y+j)%Ly,(x+i)%Lx]
             near_dilute |= dilute[(y+j)%Ly,(x+i)%Lx]
         if (not near_droplet) and near_dilute:
-            in_where = 2 # inside the dilute phase
+            location = DILUTE
         elif near_droplet and near_dilute:
-            in_where = 1 # on the interface
+            location = INTERFACE
         else:
-            in_where = 0 # inside the droplet - includes non-B molecules within
+            location = DROPLET
 
-        rn = rng.random() * mat_rate[y,x]
+        rn = rng.random() * matrix_rate[y,x]
         # Diffusion
         if (molecule_type == 1 and rn < D*np.exp(e*nB)*(4-nBI)/4) or\
                 (molecule_type == -1 and rn < D*(4-nBI)/4):
             while True:
                 rn = rng.random()
                 if rn < 0.25:
-                    if lattice[(y+1)%Ly,x] == 0:
+                    if lattice[(y+1)%Ly,x] == SOLVENT:
                         update_y = 1
                         break
                 elif rn < 0.5:
-                    if lattice[y,(x+1)%Lx] == 0:
+                    if lattice[y,(x+1)%Lx] == SOLVENT:
                         update_x = 1
                         break
                 elif rn < 0.75:
-                    if lattice[(y-1)%Ly,x] == 0:
+                    if lattice[(y-1)%Ly,x] == SOLVENT:
                         update_y = -1
                         break
                 else:
-                    if lattice[y,(x-1)%Lx] == 0:
+                    if lattice[y,(x-1)%Lx] == SOLVENT:
                         update_x = -1
                         break
             lattice[(y+update_y)%Ly,(x+update_x)%Lx] = molecule_type
             lattice[y,x] = 0
-            mat_rate[y,x] = 0
+            matrix_rate[y,x] = 0
 
             if mask[y,x] and (not mask[(y+update_y)%Ly,(x+update_x)%Lx]):
                 N_far_molecule -= 1
@@ -117,11 +128,11 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,thr,rng):
                 near_droplet |= droplet[(y+update_y+j)%Ly,(x+update_x+i)%Lx]
                 near_dilute |= dilute[(y+update_y+j)%Ly,(x+update_x+i)%Lx]
             if (not near_droplet) and near_dilute:
-                in_where = 2 # inside the dilute phase
+                location = DILUTE
             elif near_droplet and near_dilute:
-                in_where = 1 # on the interface
+                location = INTERFACE
             else:
-                in_where = 0 # inside the droplet - includes non-B molecules within
+                location = DROPLET
 
             # NOTE: Only compute fluxes along the axes passing through the CoM of the droplet
             #       in accommodation of the underlying 4-fold symmetry
@@ -131,37 +142,37 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,thr,rng):
                 if x == Lx//2:
                     direction = int((update_y-1)/2)
                     if molecule_type == 1:
-                        jB[in_where,(y+direction)%L] += update_y
+                        jB[location,(y+direction)%L] += update_y
                     else:
-                        jI[in_where,(y+direction)%L] += update_y
+                        jI[location,(y+direction)%L] += update_y
                 else:
                     direction = int((update_x-1)/2)
                     if molecule_type == 1:
-                        jB[in_where,(x+direction)%L] += update_x
+                        jB[location,(x+direction)%L] += update_x
                     else:
-                        jI[in_where,(x+direction)%L] += update_x
+                        jI[location,(x+direction)%L] += update_x
 
             if molecule_type == 1:
                 # -1: Because the B-molecule now has evacuated the original lattice site 
-                nB_1 = mat_nB[(y+update_y)%Ly,(x+update_x)%Lx] - 1
-                S = e*(nB-nB_1)/2 # log-ratio of the forward and backward displacement rates
+                nB_new = matrix_nB[(y+update_y)%Ly,(x+update_x)%Lx] - 1
+                S = e*(nB-nB_new)/2 # log-ratio of the forward and backward displacement rates
 
                 # Entropy production is equally attributed to the lattice sites involved.
-                entropy[in_where,y,x] += S
-                entropy[in_where,(y+update_y)%L,(x+update_x)%L] += S
+                entropy[location,y,x] += S
+                entropy[location,(y+update_y)%L,(x+update_x)%L] += S
         
         else:
             S = 0.0
             rn = rng.random()
             # B -> I
             if molecule_type == 1:
-                lattice[y,x] = -1
+                lattice[y,x] = INERT
                 update_rxn = -1
-                mat_rate[y,x] = kIB[nB] + D*(4-nBI)/4
+                matrix_rate[y,x] = kIB[nB] + D*(4-nBI)/4
                 if x == Lx//2:
-                    NBI[in_where,y] += 1
+                    NBI[location,y] += 1
                 elif y == Ly//2:
-                    NBI[in_where,x] += 1
+                    NBI[location,x] += 1
 
                 if rn < np.exp(e*nB+df) / kBI[nB]:
                     S = e*nB+df
@@ -170,21 +181,21 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,thr,rng):
 
             # I -> B
             else:
-                lattice[y,x] = 1
+                lattice[y,x] = BONDING
                 update_rxn = 1
-                mat_rate[y,x] = kBI[nB] + D*np.exp(e*nB)*(4-nBI)/4
+                matrix_rate[y,x] = kBI[nB] + D*np.exp(e*nB)*(4-nBI)/4
 
                 if x == Lx//2:
-                    NIB[in_where,y] += 1
+                    NIB[location,y] += 1
                 elif y == Ly//2:
-                    NIB[in_where,x] += 1
+                    NIB[location,x] += 1
 
                 if rn < 1.0 / kIB[nB]:
                     S = -(e*nB+df)
                 else:
                     S = -(e*nB+df+µdr)
 
-            entropy[in_where,y,x] += S
+            entropy[location,y,x] += S
 
         if near_droplet:
             _,droplet = condensed_search(lattice,Ly,Lx)
@@ -192,11 +203,12 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,thr,rng):
 
         # Update for reaction
         if update_rxn:
-            update_mat_rate_rxn(kIB,kBI,e,D,lattice,mat_nB,mat_nBI,mat_rate,update_rxn,Ly,Lx,y,x)
+            update_matrix_rate_rxn(kIB,kBI,e,D,lattice,matrix_nB,matrix_nBI,matrix_rate,update_rxn,Ly,Lx,y,x)
 
         # Update for diffusion
         elif update_x != 0 or update_y != 0:
-            update_mat_rate_displace(kIB,kBI,e,D,lattice,mat_nB,mat_nBI,mat_rate,molecule_type,update_y,update_x,Ly,Lx,y,x)
+            update_matrix_rate_displace(kIB,kBI,e,D,lattice,matrix_nB,matrix_nBI,matrix_rate,molecule_type,\
+                    update_y,update_x,Ly,Lx,y,x)
 
     return tot_N_far_molecule, tot_rhoB, tot_rhoI, jB, jI, NBI, NIB, entropy, T, lattice
 
@@ -212,7 +224,7 @@ def kmc(L,e,df,µdr,D,eta,index,tot_particle,thr,R):
     for y in range(Ly):
         for x in range(Lx):
             if (y-Ly//2)**2 + (x-Lx//2)**2 <= R**2:
-                lattice[y,x] = 1
+                lattice[y,x] = BONDING
 
     kIB,kBI = set_rate(e,df,µdr,eta)
     n_dil_molecule = 0
@@ -226,9 +238,9 @@ def kmc(L,e,df,µdr,D,eta,index,tot_particle,thr,R):
                 if lattice[(y+j)%Ly,(x+i)%Lx] == 1:
                     b += 1
             if rn < kBI[b] / (kBI[b] + kIB[b]):
-                lattice[y,x] = -1
+                lattice[y,x] = INERT
             else:
-                lattice[y,x] = 1
+                lattice[y,x] = BONDING
             n_dil_molecule += 1
     
     # Relax to a steady state

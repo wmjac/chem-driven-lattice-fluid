@@ -6,14 +6,25 @@ from multiprocessing import Process
 from numba.typed import List
 from relax import relax
 from search import condensed_search, dilute_search
-from set_rate import set_rate, set_rate_mat, update_mat_rate_rxn, update_mat_rate_displace
+from set_rate import set_rate, set_rate_matrix, update_matrix_rate_rxn, update_matrix_rate_displace
+
+BONDING = 1
+SOLVENT = 0
+INERT = -1
+
+DILUTE = 2
+INTERFACE = 1
+CONDENSED = 0
 
 # TODO: Make lattice into a class someday; numba support is experimental at the moment.
 
 @njit
 def run(lattice,Ly,Lx,e,df,µdr,D,eta,rng):
     kIB, kBI = set_rate(e,df,µdr,eta)
-    mat_nB, mat_nBI, mat_rate = set_rate_mat(kIB,kBI,lattice,Ly,Lx,e,df,µdr,D,eta)
+    # matrix for nearest-neighboring B-molecules (matrix_nB)
+    # matrix for nearest-neighboring B and I-molecules (matrix_nBI)
+    # matrix for kMC rates (matrix_rate)
+    matrix_nB, matrix_nBI, matrix_rate = set_rate_mat(kIB,kBI,lattice,Ly,Lx,e,df,µdr,D,eta)
 
     T = 0.0
     
@@ -39,9 +50,9 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,rng):
 
     # NOTE: Realign the condensed phase every 100 sweeps of kMC events
     for count in range(100*(lattice != 0).sum()):
-        cumul = mat_rate.sum()
+        cumul = matrix_rate.sum()
         rn = rng.random()*cumul
-        v = np.searchsorted(mat_rate.cumsum(),rn,side="right")
+        v = np.searchsorted(matrix_rate.cumsum(),rn,side="right")
         y = v // Lx
         x = v % Lx
 
@@ -53,9 +64,9 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,rng):
         update_rxn = 0
         update_x = 0
         update_y = 0
-        molecule_type = lattice[y,x] #1 = B; 0 = S; -1 = I
-        nB = mat_nB[y,x]
-        nBI = mat_nBI[y,x]
+        molecule_type = lattice[y,x] #1 = BONDING; 0 = SOLVENT; -1 = INERT
+        nB = matrix_nB[y,x]
+        nBI = matrix_nBI[y,x]
 
         near_condensed = condensed[y,x]
         near_dilute = dilute[y,x]
@@ -64,32 +75,32 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,rng):
             near_dilute |= dilute[(y+j)%Ly,(x+i)%Lx]
 
         if (not near_condensed) and near_dilute:
-            in_where = 2 # inside the dilute phase
+            location = DILUTE
         elif near_condensed and near_dilute:
-            in_where = 1 # on the interface
+            location = INTERFACE
         else:
-            in_where = 0 # inside the condensed phase - includes non B-molecules within
+            location = CONDENSED
 
-        rn = rng.random() * mat_rate[y,x]
+        rn = rng.random() * matrix_rate[y,x]
         # Diffusion
         if (molecule_type == 1 and rn < D*np.exp(e*nB)*(4-nBI)/4) or\
                 (molecule_type == -1 and rn < D*(4-nBI)/4):
             while True:
                 rn = rng.random()
                 if rn < 0.25:
-                    if lattice[(y+1)%Ly,x] == 0:
+                    if lattice[(y+1)%Ly,x] == SOLVENT:
                         update_y = 1
                         break
                 elif rn < 0.5:
-                    if lattice[y,(x+1)%Lx] == 0:
+                    if lattice[y,(x+1)%Lx] == SOLVENT:
                         update_x = 1
                         break
                 elif rn < 0.75:
-                    if lattice[(y-1)%Ly,x] == 0:
+                    if lattice[(y-1)%Ly,x] == SOLVENT:
                         update_y = -1
                         break
                 else:
-                    if lattice[y,(x-1)%Lx] == 0:
+                    if lattice[y,(x-1)%Lx] == SOLVENT:
                         update_x = -1
                         break
             
@@ -98,15 +109,15 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,rng):
                 near_condensed |= condensed[(y+update_y+j)%Ly,(x+update_x+i)%Lx]
                 near_dilute |= dilute[(y+update_y+j)%Ly,(x+update_x+i)%Lx]
             if (not near_condensed) and near_dilute:
-                in_where = 2 # inside the dilute phase
+                location = DILUTE
             elif near_condensed and near_dilute:
-                in_where = 1 # on the interface
+                location = INTERFACE
             else:
-                in_where = 0 # inside the condensed phase - includes non-B molecules within
+                location = CONDENSED
 
             lattice[(y+update_y)%Ly,(x+update_x)%Lx] = molecule_type
-            lattice[y,x] = 0
-            mat_rate[y,x] = 0
+            lattice[y,x] = SOLVENT
+            matrix_rate[y,x] = 0
 
             # Update concentration Profile
             if molecule_type == 1:
@@ -121,20 +132,20 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,rng):
             if update_x != 0:
                 direction = int((update_x-1)/2)
                 if molecule_type == 1:
-                    jB[in_where,(x+direction)%Lx] += update_x
+                    jB[location,(x+direction)%Lx] += update_x
                 else:
-                    jI[in_where,(x+direction)%Lx] += update_x
+                    jI[location,(x+direction)%Lx] += update_x
 
             # Entropy production rate density
             # Only count B-molecule since the displacement rate of I-molecules is always constant
             if molecule_type == 1:
                 # -1: Because B-molecule has moved from the original site
-                nB_1 = mat_nB[(y+update_y)%Ly,(x+update_x)%Lx] -1 
-                S = (nB-nB_1)*e/2 # log-ratio of forward and backward displacement rates
+                nB_new = matrix_nB[(y+update_y)%Ly,(x+update_x)%Lx] -1 
+                S = (nB-nB_new)*e/2 # log-ratio of forward and backward displacement rates
                 
                 # Entropy production is equally attributed to the lattice sites involved.
-                entropy[in_where,y,x] += S
-                entropy[in_where,(y+update_y)%Ly,(x+update_x)%Lx] += S
+                entropy[location,y,x] += S
+                entropy[location,(y+update_y)%Ly,(x+update_x)%Lx] += S
 
         # Reaction
         else:
@@ -144,29 +155,29 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,rng):
             if molecule_type == 1:
                 distB[x] -= 1
                 distI[x] += 1
-                NBI[in_where,x] += 1
+                NBI[location,x] += 1
                 if rn < np.exp(e*nB+df) / kBI[nB]:
                     S = e*nB+df
                 else:
                     S = e*nB+df+µdr
-                lattice[y,x] = -1
+                lattice[y,x] = INERT
                 update_rxn = -1
-                mat_rate[y,x] = kIB[nB] + D*(4-nBI)/4
+                matrix_rate[y,x] = kIB[nB] + D*(4-nBI)/4
             # I -> B
             else:
                 distB[x] += 1
                 distI[x] -= 1
-                NIB[in_where,x] += 1
+                NIB[location,x] += 1
                 if rn < 1.0 / kIB[nB]:
                     S = -(e*nB+df)
                 else:
                     S = -(e*nB+df+µdr)
-                lattice[y,x] = 1
+                lattice[y,x] = BONDING
                 update_rxn = 1
-                mat_rate[y,x] = kBI[nB] + D*np.exp(e*nB)*(4-nBI)/4
+                matrix_rate[y,x] = kBI[nB] + D*np.exp(e*nB)*(4-nBI)/4
 
             # Entropy production rate density
-            entropy[in_where,y,x] += S
+            entropy[location,y,x] += S
 
         if near_condensed:
             _,condensed = condensed_search(lattice,Ly,Lx)
@@ -174,11 +185,12 @@ def run(lattice,Ly,Lx,e,df,µdr,D,eta,rng):
 
         # Update for reaction
         if update_rxn:
-            update_mat_rate_rxn(kIB,kBI,e,D,lattice,mat_nB,mat_nBI,mat_rate,update_rxn,Ly,Lx,y,x)
+            update_matrix_rate_rxn(kIB,kBI,e,D,lattice,matrix_nB,matrix_nBI,matrix_rate,update_rxn,Ly,Lx,y,x)
 
         # Update for diffusion
         elif update_x != 0 or update_y != 0:
-            update_mat_rate_displace(kIB,kBI,e,D,lattice,mat_nB,mat_nBI,mat_rate,molecule_type,update_y,update_x,Ly,Lx,y,x)
+            update_matrix_rate_displace(kIB,kBI,e,D,lattice,matrix_nB,matrix_nBI,matrix_rate,molecule_type,\
+                    update_y,update_x,Ly,Lx,y,x)
 
     return rhoB, rhoI, jB, jI, NBI, NIB, entropy, T, lattice
 
@@ -200,9 +212,9 @@ def kmc(Ly,Lx,e,df,µdr,D,eta,index):
                     b += 1
             rn = rng.random()
             if rn < kBI[b]/(kBI[b]+kIB[b]):
-                vapor[y,x] = -1
+                vapor[y,x] = INERT
             else:
-                vapor[y,x] = 1
+                vapor[y,x] = BONDING
             n_particle += 1
 
     for i in range(100):
