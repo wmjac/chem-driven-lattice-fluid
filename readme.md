@@ -1,9 +1,9 @@
 This repository contains the codes used to produce data presented in the following paper:  
-Y. Cho, W.M. Jacobs, Interfacial Effects Determine Nonequilibrium Phase Behaviors in Chemically Driven Fluids, Proc. Natl. Acad. Sci. U.S.A. (2025, in press).  
-Here, we establish first-principles analytical theory to show the properties of the interface between the coexisting phases in chemically driven fluids  
+Y. Cho, W.M. Jacobs, Interfacial Effects Determine Nonequilibrium Phase Behaviors in Chemically Driven Fluids, Proc. Natl. Acad. Sci. U.S.A. (2025).  
+Here, we establish first-principles analytical theory to show the properties of the interface between the coexisting phases in chemically driven fluids
 governs the nonequilibrium phase behaviors and demonstrate this prediction with agent-based simulation.  
 
-This requires "numba" python package with the latest version for acceleration in calculation.  
+This requires "numba" python package for acceleration in calculation.  
 
 # Coexistence simulation across a flat interface  
 src/flat.py => Concentration profiles, diffusive and reactive flux densities, entropy production rate density, and interfacial roughness  

@@ -1,3 +1,4 @@
+This directory contains the output data from the following example case:
 ```
 Example: 8 independent simulations (= batch_size) from index 0 (= start) to 7
 

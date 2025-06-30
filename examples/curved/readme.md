@@ -1,3 +1,4 @@
+This directory contains the output data from the following example case:
 ```
 Example: Simulation with ~547 molecules in the dilute phase and ~225 molecules in the condensed phase
 
