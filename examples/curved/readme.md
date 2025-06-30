@@ -1,3 +1,10 @@
+```
+Example: Simulation with ~547 molecules in the dilute phase and ~225 molecules in the condensed phase
+
+                   L     ε      ∆f     ∆µ     Λ     η    N_vap   far-field threshold   start  batch_size       R
+python curved.py  101  -2.95  1.7337  2.00   100   1.0    547             36             0        1         8.462843
+```
+
 lattice => The instantaneous configuration of the system at the end of simulation.<br />
 list_sz => The number of B-molecules belong to the droplet measured every 100 sweeps of kMC events.<br />
            Sometimes useful for determining whether the system has reached the steady-state.<br />
